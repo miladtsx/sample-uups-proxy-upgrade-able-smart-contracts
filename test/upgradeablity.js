@@ -2,16 +2,22 @@ const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 const { expectRevert } = require("@openzeppelin/test-helpers");
 
-describe("Box", function (accounts) {
-  let proxyContract;
-  let deployProxy;
-  let Box;
-  let BoxV2;
-  let BoxV3;
+let admin, newAdmin, otherAccount;
+let proxyContract;
+let deployProxy;
+let Box;
+let BoxV2;
+let BoxV3;
 
-  before(async () => {
+describe("Upgrade-able Box", function (accounts) {
+  beforeEach(async () => {
+    [admin, newAdmin, otherAccount] = await ethers.getSigners();
     Box = await ethers.getContractFactory("Box");
     BoxV2 = await ethers.getContractFactory("BoxV2");
+  });
+
+  it("should deploy the upgrade-able smart contract", async () => {
+    // Deploy
     deployProxy = async () => {
       const _proxy = await upgrades.deployProxy(Box, [200], {
         initializer: "set",
@@ -22,16 +28,11 @@ describe("Box", function (accounts) {
     };
   });
 
-  it("should deploy correctly", async function () {
-    const [admin, newAdmin, otherAccount] = await ethers.getSigners();
-
+  it("should should initialize correctly", async () => {
     await deployProxy();
     expect(await proxyContract.get()).be.equal(200);
-
-    // Check the owner
     expect(await proxyContract.owner()).be.equal(admin.address);
 
-    // Prevent reInitializations
     await expectRevert(
       proxyContract.set(200),
       "Initializable: contract is already initialized"
@@ -41,67 +42,89 @@ describe("Box", function (accounts) {
       proxyContract.connect(newAdmin).set(200),
       "Initializable: contract is already initialized"
     );
+  });
 
-    // Prevent un-authorized access
+  it("should prevent un-authorized upgrade", async () => {
     await expectRevert(
       upgrades.upgradeProxy(proxyContract.address, BoxV2.connect(newAdmin)),
       "Unauthorized access"
     );
+  });
 
-    // Pause all operations
-    // only admin or proxy admin
+  it("should limit pause-ability functionality only to admin or proxy admin", async () => {
     await expectRevert(
       proxyContract.connect(newAdmin).pause(),
       "Ownable: caller is not the owner"
     );
-
     expect(await proxyContract.get()).be.equal(200);
     await proxyContract.pause();
-    await expectRevert(proxyContract.get(), "Pausable: paused");
-
+    await expectRevert(
+      proxyContract.connect(otherAccount).get(),
+      "Pausable: paused"
+    );
     await proxyContract.connect(admin).unpause();
-    // UnPause all operations
+  });
 
+  it("should be unpaused by admin", async () => {
     expect(await proxyContract.get()).to.be.equal(200);
     await proxyContract.increment();
-    expect(await proxyContract.get()).to.be.equal(199); // Buggy value; the correct one is 201;
+    expect(await proxyContract.get()).to.be.equal(199); // Buggy value; the correct one is 201; so time to fix the bug!
+  });
+});
 
-    // Upgrade - Fix the Bug
+describe("Fixing a discovered bug", () => {
+  it("should produce buggy result", async () => {
+    expect(await proxyContract.get()).to.be.equal(199);
+    await proxyContract.increment();
+    expect(await proxyContract.get()).to.be.equal(198); // Buggy value; the correct one is 201; so time to fix the bug!
+  });
+
+  it("should upgrade potential fix", async function () {
     proxyContract = await upgrades.upgradeProxy(proxyContract.address, BoxV2);
+  });
 
-    //! TODO how to add a new initializer?
+  it("should emit Upgraded event", async () => {
+    //! TODO check event emitting
+    // await upgradeResult.deployTransaction.wait();
+    // let { hash, receipt } = upgradeResult.deployTransaction
+    // let implementation_address = await upgrades.erc1967.getImplementationAddress(proxyContract.address)
+    // let _box = await Box.attach(implementation_address)
+    // await expectEvent.inTransaction(hash, _box, "Upgraded");
+  });
+
+  it("should keep the storage intact", async () => {
+    expect(await proxyContract.get()).be.equal(198);
+  });
+
+  it("should fix the bug", async () => {
+    await proxyContract.increment();
+    await proxyContract.increment();
+    expect(await proxyContract.get()).to.be.equal(200);
+  });
+
+  it("should initialize the upgraded implementation", async () => {
+    //! TODO how to add an initializer for new implementation?
     // await expectRevert(
     //   proxyContract.newInitializer(),
     //   "Initializable: contract is already initialized"
     // );
+  });
 
-    // State variables or Storage should be kept intact after the upgrade
-    expect(await proxyContract.get()).be.equal(199);
-
-    // the bug should be fixed
-    await proxyContract.increment();
-    expect(await proxyContract.get()).to.be.equal(200);
-
-    //! TODO check event emitting
-    // await upgradeResult.deployTransaction.wait();
-    // let { hash, receipt } = upgradeResult.deployTransaction
-
-    // let implementation_address = await upgrades.erc1967.getImplementationAddress(proxyContract.address)
-    // let _box = await Box.attach(implementation_address)
-    // await expectEvent.inTransaction(hash, _box, "Upgraded");
-
-    // change the proxy admin
+  it("should change the proxy admin", async function () {
     await expect(proxyContract.transferOwnership(newAdmin.address))
       .to.emit(proxyContract, "OwnershipTransferred")
       .withArgs(admin.address, newAdmin.address);
-    expect(await proxyContract.owner()).not.be.equal(admin.address);
-    expect(await proxyContract.owner()).be.equal(newAdmin.address);
 
-    // Confirm newAdmin access
+    expect(await proxyContract.owner()).not.be.equal(admin.address);
     await expectRevert(
       proxyContract.connect(admin).pause(),
       "Ownable: caller is not the owner"
     );
+
+    expect(await proxyContract.owner()).be.equal(newAdmin.address);
+  });
+
+  it("should transfer ownership correctly", async () => {
     await proxyContract.connect(newAdmin).pause();
     await expectRevert(proxyContract.get(), "Pausable: paused");
     await expectRevert(
@@ -110,26 +133,38 @@ describe("Box", function (accounts) {
     );
     await proxyContract.connect(newAdmin).unpause();
     expect(await proxyContract.get()).to.be.equal(200);
+  });
+});
 
-    // Upgrade by newAdmin - add new public variable (very simple Staking)
-    BoxV3 = await ethers.getContractFactory("BoxV3", newAdmin);
+describe("Add new variable", () => {
+  it("should upgrade", async () => {
+    BoxV3 = await ethers.getContractFactory("BoxV3", newAdmin); // Upgrade by newAdmin
     proxyContract = await upgrades.upgradeProxy(proxyContract.address, BoxV3);
+  });
 
-    // Storage is intact
+  it("should keep the storage intact", async () => {
     expect(await proxyContract.get()).to.be.equal(200);
+  });
 
-    // Stake and get the Event
+  it("should keep the old functionalities intact", async () => {
+    await proxyContract.increment();
+    expect(await proxyContract.get()).be.equal(201);
+  });
+
+  it("should test new functionality", async () => {
+    // Deposit and listen for the Event
     const otherAccountProxy = proxyContract.connect(otherAccount);
-    expect(await otherAccountProxy.readStakedAmount()).be.equal(0);
-    await expectRevert(otherAccountProxy.stake(0), "_amount > 0");
-    await expect(otherAccountProxy.stake(1)).to.emit(proxyContract, "Staked");
-    expect(await otherAccountProxy.readStakedAmount()).be.equal(1);
-
-    // Pause
+    expect(await otherAccountProxy.readDepositedAmount()).be.equal(0);
+    await expectRevert(otherAccountProxy.deposit(0), "_amount > 0");
+    await expect(otherAccountProxy.deposit(1)).to.emit(
+      proxyContract,
+      "Deposited"
+    );
+    expect(await otherAccountProxy.readDepositedAmount()).be.equal(1);
     await proxyContract.connect(newAdmin).pause();
-    expect(await otherAccountProxy.readStakedAmount()).be.equal(1);
-    await expectRevert(otherAccountProxy.stake(0), "Pausable: paused");
+    expect(await otherAccountProxy.readDepositedAmount()).be.equal(1);
+    await expectRevert(otherAccountProxy.deposit(0), "Pausable: paused");
     await proxyContract.connect(newAdmin).unpause();
-    await expectRevert(otherAccountProxy.stake(0), "_amount > 0");
+    await expectRevert(otherAccountProxy.deposit(0), "_amount > 0");
   });
 });

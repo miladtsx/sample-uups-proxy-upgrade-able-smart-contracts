@@ -6,15 +6,19 @@ import "./StorageV2.sol";
 import "./interfaces/IBoxV3.sol";
 
 contract BoxV3 is BoxV2, StorageV2, IBoxV3 {
-    function readStakedAmount() external view returns (uint256) {
-        return stakedTokens[_msgSender()];
+    function readDepositedAmount() external view returns (uint256) {
+        return depositedTokens[_msgSender()];
     }
 
-    function stake(uint256 _amount) external whenNotPaused returns (bool success) {
+    function deposit(uint256 _amount)
+        external
+        whenNotPaused
+        returns (bool success)
+    {
         require(_amount > 0, "_amount > 0");
-        stakedTokens[_msgSender()] += _amount;
+        depositedTokens[_msgSender()] += _amount;
         success = true;
 
-        emit Staked(_msgSender(), _amount);
+        emit Deposited(_msgSender(), _amount);
     }
 }

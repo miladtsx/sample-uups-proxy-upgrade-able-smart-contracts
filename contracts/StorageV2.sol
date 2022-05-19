@@ -4,5 +4,5 @@ pragma solidity 0.8.9;
 import "./Storage.sol";
 
 contract StorageV2 is Storage {
-    mapping(address => uint256) internal stakedTokens; // Added at V2
+    mapping(address => uint256) internal depositedTokens; // Added at V2
 }

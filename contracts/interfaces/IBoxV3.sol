@@ -2,5 +2,5 @@
 pragma solidity 0.8.9;
 
 interface IBoxV3 {
-    event Staked(address indexed _staker, uint256 _amount);
+    event Deposited(address indexed _depositor, uint256 _amount);
 }
